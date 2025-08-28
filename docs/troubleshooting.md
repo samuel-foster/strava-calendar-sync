@@ -30,6 +30,22 @@ Common issues and solutions for the Strava to Google Calendar sync.
 2. **Delete unused projects**: Check Cloud Resource Manager for old projects
 3. **Use different Google account**: Create the script with an account that has available quota
 
+### Error: "TypeError: Cannot read properties of undefined (reading 'getEvents')"
+
+**Cause**: Calendar permissions not granted or calendar access issues.
+
+**Solutions**:
+1. **Re-grant permissions**: Run `main()` again and click "Review permissions" when prompted
+2. **Test calendar access**: Run the `testCalendarAccess()` function to diagnose issues
+3. **Check calendar exists**: Ensure your "Strava" calendar exists in Google Calendar
+4. **Browser refresh**: Clear browser cache and refresh Apps Script editor
+
+**Steps to re-authorize**:
+1. In Apps Script, select `main` function and click "Run"
+2. Click "Review permissions" in the authorization dialog
+3. Select your Google account and click "Allow"
+4. Grant Calendar and External requests permissions
+
 ### Error: "Failed to refresh Strava token"
 
 **Cause**: Invalid refresh token or Strava app credentials.

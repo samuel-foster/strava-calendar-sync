@@ -96,7 +96,26 @@ function refreshAccessTokenIfNeeded(clientId, clientSecret, refreshToken) {
 function syncActivitiesToCalendar(accessToken) {
   var props = PropertiesService.getScriptProperties();
   var lastActivityId = props.getProperty('LAST_ACTIVITY_ID') || '0';
-  var calendar = CalendarApp.getDefaultCalendar();
+  
+  // Try to get Strava calendar first, fallback to default
+  var calendar;
+  try {
+    var stravaCalendars = CalendarApp.getCalendarsByName('Strava');
+    if (stravaCalendars && stravaCalendars.length > 0) {
+      calendar = stravaCalendars[0];
+      console.log('Using Strava calendar');
+    } else {
+      calendar = CalendarApp.getDefaultCalendar();
+      console.log('Using default calendar (Strava calendar not found)');
+    }
+  } catch (error) {
+    calendar = CalendarApp.getDefaultCalendar();
+    console.log('Fallback to default calendar due to error:', error.toString());
+  }
+  
+  if (!calendar) {
+    throw new Error('Unable to access any calendar. Please check permissions.');
+  }
   
   console.log('Fetching activities since ID:', lastActivityId);
   
@@ -259,6 +278,136 @@ function formatDuration(seconds) {
 function formatSpeed(speedMs) {
   var kmh = speedMs * 3.6;
   return kmh.toFixed(1) + ' km/h';
+}
+
+/**
+ * Test function to check calendar access and permissions
+ * Run this first if you're having calendar issues
+ */
+function testCalendarAccess() {
+  try {
+    console.log('Testing calendar access...');
+    
+    // Test default calendar
+    var defaultCal = CalendarApp.getDefaultCalendar();
+    console.log('Default calendar:', defaultCal ? defaultCal.getName() : 'FAILED');
+    
+    // Test Strava calendar
+    var stravaCalendars = CalendarApp.getCalendarsByName('Strava');
+    console.log('Strava calendars found:', stravaCalendars.length);
+    
+    if (stravaCalendars.length > 0) {
+      console.log('Strava calendar name:', stravaCalendars[0].getName());
+      console.log('Strava calendar ID:', stravaCalendars[0].getId());
+    }
+    
+    // List all calendars
+    var allCalendars = CalendarApp.getAllCalendars();
+    console.log('All available calendars:');
+    allCalendars.forEach(function(cal) {
+      console.log('- ' + cal.getName() + ' (ID: ' + cal.getId() + ')');
+    });
+    
+    console.log('Calendar access test completed successfully');
+  } catch (error) {
+    console.error('Calendar access test failed:', error.toString());
+  }
+}
+
+/**
+ * Recovers and re-adds Strava activities from the past week
+ * Run this once to backfill missing activities from this week
+ */
+function recoverThisWeeksActivities() {
+  try {
+    console.log('Starting recovery of this week\'s activities...');
+    
+    var props = PropertiesService.getScriptProperties();
+    var clientId = props.getProperty('STRAVA_CLIENT_ID');
+    var clientSecret = props.getProperty('STRAVA_CLIENT_SECRET');
+    var refreshToken = props.getProperty('STRAVA_REFRESH_TOKEN');
+    
+    if (!clientId || !clientSecret || !refreshToken) {
+      throw new Error('Missing required properties. Set STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET and STRAVA_REFRESH_TOKEN in Script Properties.');
+    }
+    
+    // Get fresh access token
+    var accessToken = refreshAccessTokenIfNeeded(clientId, clientSecret, refreshToken);
+    
+    // Get calendar
+    var calendar;
+    var stravaCalendars = CalendarApp.getCalendarsByName('Strava');
+    if (stravaCalendars && stravaCalendars.length > 0) {
+      calendar = stravaCalendars[0];
+      console.log('Using Strava calendar for recovery');
+    } else {
+      calendar = CalendarApp.getDefaultCalendar();
+      console.log('Using default calendar for recovery (Strava calendar not found)');
+    }
+    
+    // Calculate date range for this week (last 7 days)
+    var now = new Date();
+    var weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    var afterTimestamp = Math.floor(weekAgo.getTime() / 1000);
+    
+    console.log('Fetching activities after:', new Date(afterTimestamp * 1000));
+    
+    // Fetch activities from the past week
+    var url = 'https://www.strava.com/api/v3/athlete/activities?after=' + afterTimestamp + '&per_page=100';
+    
+    var response = UrlFetchApp.fetch(url, {
+      headers: { 
+        Authorization: 'Bearer ' + accessToken 
+      },
+      muteHttpExceptions: true
+    });
+    
+    if (response.getResponseCode() !== 200) {
+      throw new Error('Strava API error: ' + response.getResponseCode() + ' ' + response.getContentText());
+    }
+    
+    var activities = JSON.parse(response.getContentText() || '[]');
+    console.log('Found', activities.length, 'activities from the past week');
+    
+    var recoveredCount = 0;
+    
+    // Process each activity
+    activities.forEach(function(activity) {
+      try {
+        var activityId = activity.id;
+        var startTime = new Date(activity.start_date);
+        var durationMs = (activity.elapsed_time || 0) * 1000;
+        var endTime = new Date(startTime.getTime() + durationMs);
+        
+        // Check if event already exists
+        var existingEvents = calendar.getEvents(startTime, endTime, {
+          search: 'Strava ID: ' + activityId
+        });
+        
+        if (existingEvents && existingEvents.length > 0) {
+          console.log('Event already exists for activity', activityId, '- skipping');
+          return;
+        }
+        
+        // Create the event
+        createCalendarEvent(calendar, activity);
+        recoveredCount++;
+        
+        console.log('Recovered activity:', activityId, '-', activity.name || activity.type);
+        
+        // Small delay to avoid rate limiting
+        Utilities.sleep(100);
+        
+      } catch (error) {
+        console.error('Failed to recover activity', activity.id, ':', error.toString());
+      }
+    });
+    
+    console.log('Recovery completed successfully. Recovered', recoveredCount, 'activities.');
+    
+  } catch (error) {
+    console.error('Recovery failed:', error.toString());
+  }
 }
 
 /**

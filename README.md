@@ -74,6 +74,26 @@ Once set up, the script will:
 3. Create corresponding Google Calendar events
 4. Automatically refresh tokens as needed
 
+## Troubleshooting
+
+### Permission Issues
+If you get calendar access errors:
+1. Run the `testCalendarAccess()` function to diagnose issues
+2. Re-run `main()` and grant permissions when prompted
+3. Check that your "Strava" calendar exists in Google Calendar
+
+### Missing Activities
+If you accidentally deleted or missed some activities:
+1. Run `recoverThisWeeksActivities()` to backfill the past 7 days
+2. Or delete `LAST_ACTIVITY_ID` from Script Properties to re-sync all activities
+
+### Functions Available
+- `main()` - Main sync function (set this on a trigger)
+- `testCalendarAccess()` - Test calendar permissions and list available calendars
+- `recoverThisWeeksActivities()` - Recover missing activities from past 7 days
+- `createSyncTrigger()` - Create the automatic 15-minute sync trigger
+- `deleteSyncTriggers()` - Stop automatic syncing
+
 ## Customization
 
 - **Calendar**: Modify `CalendarApp.getDefaultCalendar()` to use a specific calendar
