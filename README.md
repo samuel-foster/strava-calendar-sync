@@ -1,14 +1,15 @@
 # Strava to Google Calendar Sync
 
-Automatically sync your Strava activities to Google Calendar using Google Apps Script.
+Automatically sync your Strava activities to Google Calendar using Google Apps Script with **real-time webhooks** for instant updates.
 
 ## Features
 
-- ✅ Syncs Strava activities to Google Calendar
+- ⚡ **Real-time sync** via Strava webhooks (activities appear instantly)
 - ✅ Automatic token refresh 
 - ✅ Prevents duplicate events
-- ✅ Configurable sync intervals
+- ✅ Backup polling for reliability
 - ✅ Includes activity details (distance, duration, type)
+- ✅ Uses dedicated "Strava" calendar
 
 ## Quick Setup
 
@@ -40,8 +41,28 @@ Automatically sync your Strava activities to Google Calendar using Google Apps S
    - `STRAVA_CLIENT_ID`: Your Strava client ID
    - `STRAVA_CLIENT_SECRET`: Your Strava client secret  
    - `STRAVA_REFRESH_TOKEN`: The refresh token from step 2
-5. Run `main()` once to authorize Calendar access
-6. Add a time-driven trigger (every 15 minutes) for the `main()` function
+
+### 4. Set Up Real-time Webhooks (Recommended)
+
+1. **Deploy as Web App**:
+   - Click Deploy → New deployment → Web app
+   - Description: "Strava Webhook Endpoint"
+   - Execute as: Me
+   - Who has access: Anyone
+   - Click "Deploy" and copy the Web App URL
+
+2. **Configure Webhook**:
+   - Add Script Property: `WEBHOOK_CALLBACK_URL` = Your Web App URL
+   - Run `main()` once to authorize Calendar access
+   - Run `registerWebhook()` to enable real-time sync
+
+3. **Set up backup polling**:
+   - Run `createBackupSyncTrigger()` for daily backup sync
+
+### 5. Alternative: Polling Mode
+If you prefer polling instead of webhooks:
+- Run `main()` once to authorize permissions
+- Run `createFrequentSyncTrigger()` for 15-minute polling
 
 ## Project Structure
 
@@ -68,38 +89,37 @@ Edit these values in Google Apps Script's Script Properties:
 
 ## Usage
 
-Once set up, the script will:
-1. Run every 15 minutes (or your chosen interval)
-2. Fetch new Strava activities
-3. Create corresponding Google Calendar events
-4. Automatically refresh tokens as needed
+### Real-time Mode (Recommended)
+With webhooks enabled, activities appear in your calendar **instantly** when you finish them on Strava!
 
-## Troubleshooting
+### Backup Polling
+Daily backup sync runs at 8 AM to catch any missed webhook events.
 
-### Permission Issues
-If you get calendar access errors:
-1. Run the `testCalendarAccess()` function to diagnose issues
-2. Re-run `main()` and grant permissions when prompted
-3. Check that your "Strava" calendar exists in Google Calendar
-
-### Missing Activities
-If you accidentally deleted or missed some activities:
-1. Run `recoverThisWeeksActivities()` to backfill the past 7 days
-2. Or delete `LAST_ACTIVITY_ID` from Script Properties to re-sync all activities
-
-### Functions Available
-- `main()` - Main sync function (set this on a trigger)
-- `testCalendarAccess()` - Test calendar permissions and list available calendars
+### Available Functions
+- `main()` - Main sync function (polling mode or backup)
+- `doPost()` - Webhook handler (called automatically by Strava)
+- `doGet()` - Webhook verification (called automatically by Strava)
+- `registerWebhook()` - Set up real-time sync
+- `listWebhooks()` - Check active webhook subscriptions
+- `unregisterWebhook()` - Disable real-time sync
+- `testCalendarAccess()` - Test calendar permissions
 - `recoverThisWeeksActivities()` - Recover missing activities from past 7 days
-- `createSyncTrigger()` - Create the automatic 15-minute sync trigger
-- `deleteSyncTriggers()` - Stop automatic syncing
+- `createBackupSyncTrigger()` - Daily backup polling
+- `createFrequentSyncTrigger()` - 15-minute polling (legacy mode)
+- `deleteSyncTriggers()` - Stop all automatic syncing
 
-## Customization
+## Configuration
 
-- **Calendar**: Modify `CalendarApp.getDefaultCalendar()` to use a specific calendar
-- **Activity Filter**: Add filters by activity type or minimum distance
-- **Event Format**: Customize event titles and descriptions
-- **Sync Frequency**: Adjust the trigger interval
+Edit these values in Google Apps Script's Script Properties:
+
+| Property | Description | Required |
+|----------|-------------|----------|
+| `STRAVA_CLIENT_ID` | Your Strava app client ID | ✅ |
+| `STRAVA_CLIENT_SECRET` | Your Strava app client secret | ✅ |
+| `STRAVA_REFRESH_TOKEN` | OAuth refresh token from authorization | ✅ |
+| `WEBHOOK_CALLBACK_URL` | Your deployed Web App URL | For webhooks |
+| `STRAVA_VERIFY_TOKEN` | Webhook verification token | Auto-generated |
+| `WEBHOOK_SUBSCRIPTION_ID` | Active webhook subscription ID | Auto-saved |
 
 ## Troubleshooting
 

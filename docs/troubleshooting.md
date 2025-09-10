@@ -2,6 +2,51 @@
 
 Common issues and solutions for the Strava to Google Calendar sync.
 
+## Webhook Issues
+
+### Error: "Missing WEBHOOK_CALLBACK_URL" when running registerWebhook()
+
+**Cause**: Web app not deployed or URL not added to Script Properties.
+
+**Solution**:
+1. Deploy as Web App: Deploy → New deployment → Web app
+2. Copy the Web App URL 
+3. Add Script Property: `WEBHOOK_CALLBACK_URL` = Your Web App URL
+4. Run `registerWebhook()` again
+
+### Webhook not receiving events
+
+**Check these items**:
+1. **Webhook registered**: Run `listWebhooks()` to verify subscription exists
+2. **Web app permissions**: Ensure "Who has access" is set to "Anyone"
+3. **Strava app active**: Check your Strava app isn't suspended
+4. **Test with activity**: Complete a short activity to test
+
+**Debug webhook**:
+```javascript
+// Check recent executions in Apps Script
+// Look for doPost() calls in the execution log
+```
+
+### Events still taking 15 minutes to appear
+
+**Cause**: Using polling triggers instead of webhooks.
+
+**Solution**:
+1. Verify webhook is registered: `listWebhooks()`
+2. Delete polling triggers: `deleteSyncTriggers()`
+3. Ensure web app is deployed with "Anyone" access
+4. Test webhook with a new activity
+
+### Duplicate events after enabling webhooks
+
+**Cause**: Both webhooks and frequent polling running simultaneously.
+
+**Solution**:
+1. Delete frequent polling triggers: `deleteSyncTriggers()`
+2. Set up daily backup only: `createBackupSyncTrigger()`
+3. Webhooks handle real-time, daily backup catches any missed events
+
 ## Authentication Issues
 
 ### Error: "Access blocked: Strava GCal Sync has not completed the Google verification process"

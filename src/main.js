@@ -1,15 +1,17 @@
 /**
  * Strava to Google Calendar Sync
  * 
- * Automatically syncs Strava activities to Google Calendar.
+ * Automatically syncs Strava activities to Google Calendar using webhooks for real-time sync.
  * 
  * Setup:
  * 1. Set Script Properties: STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET, STRAVA_REFRESH_TOKEN
  * 2. Run main() once to authorize Calendar access
- * 3. Add a time-driven trigger to run main() every 15 minutes
+ * 3. Deploy as Web App (for webhook endpoint)
+ * 4. Run registerWebhook() to set up real-time sync
+ * 5. Optional: Add backup polling trigger (daily)
  * 
- * @author Your Name
- * @version 1.0.0
+ * @author Samuel Foster
+ * @version 2.0.0
  */
 
 /**
@@ -314,6 +316,270 @@ function testCalendarAccess() {
   }
 }
 
+// =============================================================================
+// WEBHOOK FUNCTIONS - Real-time sync when activities are completed
+// =============================================================================
+
+/**
+ * Handles incoming Strava webhook events (POST requests)
+ * This function is called automatically when Strava sends activity updates
+ */
+function doPost(e) {
+  try {
+    console.log('Received webhook request');
+    
+    if (!e || !e.postData) {
+      console.log('No POST data received');
+      return ContentService.createTextOutput('OK');
+    }
+    
+    var event = JSON.parse(e.postData.contents || '{}');
+    console.log('Webhook event:', JSON.stringify(event));
+    
+    // Only process new activity creation events
+    if (event.object_type !== 'activity' || event.aspect_type !== 'create') {
+      console.log('Ignoring event - not a new activity creation');
+      return ContentService.createTextOutput('OK');
+    }
+    
+    console.log('Processing new activity webhook for ID:', event.object_id);
+    
+    // Get credentials
+    var props = PropertiesService.getScriptProperties();
+    var clientId = props.getProperty('STRAVA_CLIENT_ID');
+    var clientSecret = props.getProperty('STRAVA_CLIENT_SECRET');
+    var refreshToken = props.getProperty('STRAVA_REFRESH_TOKEN');
+    
+    if (!clientId || !clientSecret || !refreshToken) {
+      console.error('Missing Strava credentials');
+      return ContentService.createTextOutput('ERROR: Missing credentials');
+    }
+    
+    // Get fresh access token
+    var accessToken = refreshAccessTokenIfNeeded(clientId, clientSecret, refreshToken);
+    
+    // Fetch the specific activity details
+    var activityUrl = 'https://www.strava.com/api/v3/activities/' + event.object_id;
+    var response = UrlFetchApp.fetch(activityUrl, {
+      headers: { Authorization: 'Bearer ' + accessToken },
+      muteHttpExceptions: true
+    });
+    
+    if (response.getResponseCode() === 200) {
+      var activity = JSON.parse(response.getContentText());
+      
+      // Get calendar
+      var calendar = getStravaCalendar();
+      
+      // Create calendar event
+      createCalendarEvent(calendar, activity);
+      
+      // Update last activity ID to prevent reprocessing in polling
+      var currentLastId = props.getProperty('LAST_ACTIVITY_ID') || '0';
+      if (Number(activity.id) > Number(currentLastId)) {
+        props.setProperty('LAST_ACTIVITY_ID', String(activity.id));
+      }
+      
+      console.log('Successfully processed webhook for activity:', event.object_id);
+    } else {
+      console.error('Failed to fetch activity details:', response.getResponseCode(), response.getContentText());
+    }
+    
+    return ContentService.createTextOutput('OK');
+    
+  } catch (error) {
+    console.error('Webhook processing failed:', error.toString());
+    return ContentService.createTextOutput('ERROR: ' + error.toString());
+  }
+}
+
+/**
+ * Handles webhook verification (GET requests from Strava)
+ * Called when registering the webhook subscription
+ */
+function doGet(e) {
+  try {
+    console.log('Received webhook verification request');
+    
+    if (!e || !e.parameter) {
+      console.log('No parameters received');
+      return ContentService.createTextOutput('No parameters');
+    }
+    
+    var mode = e.parameter['hub.mode'];
+    var token = e.parameter['hub.verify_token'];
+    var challenge = e.parameter['hub.challenge'];
+    
+    console.log('Verification params - mode:', mode, 'token:', token, 'challenge:', challenge);
+    
+    // Get expected verify token
+    var props = PropertiesService.getScriptProperties();
+    var expectedToken = props.getProperty('STRAVA_VERIFY_TOKEN') || 'strava_webhook_verify';
+    
+    if (mode === 'subscribe' && token === expectedToken) {
+      console.log('Webhook verification successful');
+      return ContentService.createTextOutput(challenge);
+    } else {
+      console.error('Webhook verification failed - invalid token or mode');
+      return ContentService.createTextOutput('Verification failed');
+    }
+  } catch (error) {
+    console.error('Webhook verification error:', error.toString());
+    return ContentService.createTextOutput('ERROR: ' + error.toString());
+  }
+}
+
+/**
+ * Helper function to get Strava calendar with fallback to default
+ * @returns {Calendar} Google Calendar instance
+ */
+function getStravaCalendar() {
+  try {
+    var stravaCalendars = CalendarApp.getCalendarsByName('Strava');
+    if (stravaCalendars && stravaCalendars.length > 0) {
+      console.log('Using Strava calendar for webhook');
+      return stravaCalendars[0];
+    }
+  } catch (error) {
+    console.error('Error accessing Strava calendar:', error.toString());
+  }
+  
+  console.log('Using default calendar for webhook (Strava calendar not found)');
+  return CalendarApp.getDefaultCalendar();
+}
+
+/**
+ * Registers a webhook with Strava for real-time activity updates
+ * Run this once after deploying as a web app
+ */
+function registerWebhook() {
+  try {
+    console.log('Registering Strava webhook...');
+    
+    var props = PropertiesService.getScriptProperties();
+    var clientId = props.getProperty('STRAVA_CLIENT_ID');
+    var clientSecret = props.getProperty('STRAVA_CLIENT_SECRET');
+    var callbackUrl = props.getProperty('WEBHOOK_CALLBACK_URL');
+    
+    if (!clientId || !clientSecret) {
+      throw new Error('Missing STRAVA_CLIENT_ID or STRAVA_CLIENT_SECRET');
+    }
+    
+    if (!callbackUrl) {
+      throw new Error('Missing WEBHOOK_CALLBACK_URL - deploy as web app first and add the URL to Script Properties');
+    }
+    
+    // Set verify token if not already set
+    var verifyToken = props.getProperty('STRAVA_VERIFY_TOKEN');
+    if (!verifyToken) {
+      verifyToken = 'strava_webhook_verify_' + Utilities.getUuid().slice(0, 8);
+      props.setProperty('STRAVA_VERIFY_TOKEN', verifyToken);
+    }
+    
+    // Register webhook with Strava
+    var payload = {
+      client_id: clientId,
+      client_secret: clientSecret,
+      callback_url: callbackUrl,
+      verify_token: verifyToken
+    };
+    
+    var response = UrlFetchApp.fetch('https://www.strava.com/api/v3/push_subscriptions', {
+      method: 'post',
+      payload: payload,
+      muteHttpExceptions: true
+    });
+    
+    console.log('Webhook registration response:', response.getResponseCode(), response.getContentText());
+    
+    if (response.getResponseCode() === 200 || response.getResponseCode() === 201) {
+      var subscriptionData = JSON.parse(response.getContentText());
+      props.setProperty('WEBHOOK_SUBSCRIPTION_ID', String(subscriptionData.id));
+      console.log('Webhook registered successfully! Subscription ID:', subscriptionData.id);
+      console.log('Real-time sync is now active - new activities will appear immediately in your calendar');
+    } else {
+      throw new Error('Failed to register webhook: ' + response.getContentText());
+    }
+    
+  } catch (error) {
+    console.error('Webhook registration failed:', error.toString());
+  }
+}
+
+/**
+ * Lists all active webhook subscriptions
+ * Use this to check if webhook is properly registered
+ */
+function listWebhooks() {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var clientId = props.getProperty('STRAVA_CLIENT_ID');
+    var clientSecret = props.getProperty('STRAVA_CLIENT_SECRET');
+    
+    if (!clientId || !clientSecret) {
+      throw new Error('Missing STRAVA_CLIENT_ID or STRAVA_CLIENT_SECRET');
+    }
+    
+    var url = 'https://www.strava.com/api/v3/push_subscriptions?client_id=' + clientId + '&client_secret=' + clientSecret;
+    
+    var response = UrlFetchApp.fetch(url, {
+      method: 'get',
+      muteHttpExceptions: true
+    });
+    
+    console.log('Webhook list response:', response.getResponseCode(), response.getContentText());
+    
+    if (response.getResponseCode() === 200) {
+      var subscriptions = JSON.parse(response.getContentText());
+      console.log('Active webhook subscriptions:', subscriptions.length);
+      subscriptions.forEach(function(sub) {
+        console.log('- ID:', sub.id, 'URL:', sub.callback_url, 'Created:', sub.created_at);
+      });
+    }
+    
+  } catch (error) {
+    console.error('Failed to list webhooks:', error.toString());
+  }
+}
+
+/**
+ * Unregisters the webhook subscription
+ * Use this to stop real-time sync
+ */
+function unregisterWebhook() {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var clientId = props.getProperty('STRAVA_CLIENT_ID');
+    var clientSecret = props.getProperty('STRAVA_CLIENT_SECRET');
+    var subscriptionId = props.getProperty('WEBHOOK_SUBSCRIPTION_ID');
+    
+    if (!subscriptionId) {
+      console.log('No webhook subscription ID found');
+      return;
+    }
+    
+    var url = 'https://www.strava.com/api/v3/push_subscriptions/' + subscriptionId + 
+              '?client_id=' + clientId + '&client_secret=' + clientSecret;
+    
+    var response = UrlFetchApp.fetch(url, {
+      method: 'delete',
+      muteHttpExceptions: true
+    });
+    
+    console.log('Webhook unregister response:', response.getResponseCode(), response.getContentText());
+    
+    if (response.getResponseCode() === 204 || response.getResponseCode() === 200) {
+      props.deleteProperty('WEBHOOK_SUBSCRIPTION_ID');
+      console.log('Webhook unregistered successfully');
+    } else {
+      console.error('Failed to unregister webhook:', response.getContentText());
+    }
+    
+  } catch (error) {
+    console.error('Webhook unregistration failed:', error.toString());
+  }
+}
+
 /**
  * Recovers and re-adds Strava activities from the past week
  * Run this once to backfill missing activities from this week
@@ -411,10 +677,33 @@ function recoverThisWeeksActivities() {
 }
 
 /**
- * Creates a trigger to run main() every 15 minutes
- * Run this function once to set up automatic syncing
+ * Creates a trigger to run main() daily as backup
+ * Use this for backup polling in case webhooks miss any activities
  */
-function createSyncTrigger() {
+function createBackupSyncTrigger() {
+  // Delete existing backup triggers first
+  var triggers = ScriptApp.getProjectTriggers();
+  triggers.forEach(function(trigger) {
+    if (trigger.getHandlerFunction() === 'main') {
+      ScriptApp.deleteTrigger(trigger);
+    }
+  });
+  
+  // Create daily backup trigger
+  ScriptApp.newTrigger('main')
+    .timeBased()
+    .everyDays(1)
+    .atHour(8) // Run at 8 AM daily
+    .create();
+    
+  console.log('Created daily backup sync trigger - will run at 8 AM daily as backup to webhooks');
+}
+
+/**
+ * Creates a trigger to run main() every 15 minutes (legacy polling mode)
+ * Use this if you want frequent polling instead of webhooks
+ */
+function createFrequentSyncTrigger() {
   // Delete existing triggers first
   var triggers = ScriptApp.getProjectTriggers();
   triggers.forEach(function(trigger) {
@@ -429,7 +718,7 @@ function createSyncTrigger() {
     .everyMinutes(15)
     .create();
     
-  console.log('Created sync trigger - will run every 15 minutes');
+  console.log('Created frequent sync trigger - will run every 15 minutes (legacy polling mode)');
 }
 
 /**
