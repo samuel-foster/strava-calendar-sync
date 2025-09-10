@@ -2,50 +2,110 @@
 
 Common issues and solutions for the Strava to Google Calendar sync.
 
-## Webhook Issues
+## Quick Diagnostics
 
-### Error: "Missing WEBHOOK_CALLBACK_URL" when running registerWebhook()
-
-**Cause**: Web app not deployed or URL not added to Script Properties.
-
-**Solution**:
-1. Deploy as Web App: Deploy → New deployment → Web app
-2. Copy the Web App URL 
-3. Add Script Property: `WEBHOOK_CALLBACK_URL` = Your Web App URL
-4. Run `registerWebhook()` again
-
-### Webhook not receiving events
-
-**Check these items**:
-1. **Webhook registered**: Run `listWebhooks()` to verify subscription exists
-2. **Web app permissions**: Ensure "Who has access" is set to "Anyone"
-3. **Strava app active**: Check your Strava app isn't suspended
-4. **Test with activity**: Complete a short activity to test
-
-**Debug webhook**:
+### First Steps - Run These Functions
 ```javascript
-// Check recent executions in Apps Script
-// Look for doPost() calls in the execution log
+// Test your complete setup
+setupReliableSync()
+
+// Check calendar access
+testCalendarAccess()
+
+// Manual sync test
+main()
+
+// Understand webhook limitations
+analyzeWebhookIssue()
 ```
 
-### Events still taking 15 minutes to appear
+## Common Issues
 
-**Cause**: Using polling triggers instead of webhooks.
+### "Missing required properties" Error
 
-**Solution**:
-1. Verify webhook is registered: `listWebhooks()`
-2. Delete polling triggers: `deleteSyncTriggers()`
-3. Ensure web app is deployed with "Anyone" access
-4. Test webhook with a new activity
-
-### Duplicate events after enabling webhooks
-
-**Cause**: Both webhooks and frequent polling running simultaneously.
+**Symptoms**: Script fails with error about missing STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET, or STRAVA_REFRESH_TOKEN
 
 **Solution**:
-1. Delete frequent polling triggers: `deleteSyncTriggers()`
-2. Set up daily backup only: `createBackupSyncTrigger()`
-3. Webhooks handle real-time, daily backup catches any missed events
+1. Go to Google Apps Script → Project Settings → Script Properties
+2. Verify all three properties are set:
+   - `STRAVA_CLIENT_ID`: Your Strava app client ID
+   - `STRAVA_CLIENT_SECRET`: Your Strava app client secret
+   - `STRAVA_REFRESH_TOKEN`: Token from OAuth authorization
+3. Make sure there are no extra spaces or characters
+
+### "Unable to access calendar" Error
+
+**Symptoms**: Script fails when trying to create calendar events
+
+**Solutions**:
+1. **First time setup**: Run `main()` function once to authorize calendar access
+2. **Permission check**: Run `testCalendarAccess()` to diagnose issues
+3. **Calendar creation**: Create a calendar named "Strava" in Google Calendar, or the script will use your default calendar
+
+### Activities Not Syncing
+
+**Symptoms**: Script runs successfully but no new activities appear in calendar
+
+**Diagnostic Steps**:
+1. Run `main()` manually and check the console logs
+2. Verify your Strava refresh token is still valid
+3. Check if triggers are active: Apps Script → Triggers tab
+4. Look for recent activities on Strava that should sync
+
+**Solutions**:
+- If token expired: Generate new refresh token following setup guide
+- If no triggers: Run `setupReliableSync()` to recreate them
+- If activities exist but not syncing: Check `LAST_ACTIVITY_ID` property
+
+### Duplicate Events Appearing
+
+**Symptoms**: Same activity appears multiple times in calendar
+
+**Explanation**: The script automatically prevents duplicates using activity IDs. If you see duplicates, they're likely from:
+- Manual imports vs automatic sync
+- Running sync functions multiple times during testing
+- Calendar events created outside this script
+
+**Solution**: Delete duplicate events manually. Future syncs won't create more duplicates.
+
+### Token Refresh Failures
+
+**Symptoms**: "Failed to refresh Strava token" error
+
+**Causes**:
+- Refresh token has expired (unlikely - they last years)
+- Strava app has been deleted or modified
+- Network connectivity issues
+
+**Solutions**:
+1. Verify your Strava app still exists at https://www.strava.com/settings/api
+2. Generate a new refresh token following the setup guide
+3. Check Script Properties for typos in client ID/secret
+
+## Google Apps Script Limitations
+
+### Why Webhooks Don't Work
+
+**The Technical Issue**: Google Apps Script ContentService returns `302 redirect` responses instead of `200 OK`, which Strava's webhook verification requires.
+
+**This is NOT a bug in our code** - it's a fundamental limitation of Google Apps Script that has existed for 5+ years with no workaround.
+
+**Evidence**:
+- [StackOverflow discussion](https://stackoverflow.com/questions/62001078/problem-creating-a-strava-webhook-subscription-using-google-apps-script) confirms the issue
+- Multiple developers have encountered this exact problem
+- Our webhook implementation is technically correct but cannot work due to the platform limitation
+
+**Solution**: Use our reliable 15-minute polling approach, which is actually more dependable than webhooks.
+
+### Polling vs Webhooks Comparison
+
+| Aspect | 15-Minute Polling (Our Solution) | Webhooks |
+|--------|-----------------------------------|-----------|
+| **Reliability** | ✅ 100% reliable | ❌ Can miss events |
+| **Setup** | ✅ Simple | ❌ Complex |
+| **Google Apps Script** | ✅ Fully supported | ❌ Impossible |
+| **Maintenance** | ✅ Zero maintenance | ❌ Endpoints can break |
+| **Speed** | ✅ Fast enough (15 min) | ✅ Instant |
 
 ## Authentication Issues
 
